@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // Allow the development server to serve HMR resources to the phone on LAN.
-  allowedDevOrigins: ['192.168.29.60'],
+  allowedDevOrigins: ['192.168.29.60', '192.0.0.2'],
   images: {
     remotePatterns: [
       {
