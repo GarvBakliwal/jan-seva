@@ -6,7 +6,13 @@ import { apiError, apiSuccess } from '@/lib/utils';
 export const runtime = 'nodejs';
 
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
-const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png'];
+const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png']);
+
+const EXTENSION_MAP: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+};
 
 // POST /api/upload — Upload complaint image to Supabase Storage
 export async function POST(request: NextRequest) {
@@ -19,7 +25,7 @@ export async function POST(request: NextRequest) {
       return apiError('No file provided.', 400);
     }
 
-    if (!ALLOWED_TYPES.includes(file.type)) {
+    if (!ALLOWED_MIME_TYPES.has(file.type)) {
       return apiError('Only JPG and PNG images are allowed.', 400);
     }
 
@@ -28,26 +34,31 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = await createClient();
-    const extensionByType: Record<string, string> = {
-      'image/jpeg': 'jpg',
-      'image/jpg': 'jpg',
-      'image/png': 'png',
-    };
-    const ext = extensionByType[file.type] ?? file.name.split('.').pop()?.toLowerCase() ?? 'jpg';
-    const fileName = `${session.id}/${Date.now()}.${ext}`;
+
+    // Determine extension safely
+    const ext = EXTENSION_MAP[file.type] ?? 'jpg';
+
+    // Unique filename structure: userId/timestamp-uuid.ext
+    const uniqueId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString();
+    const fileName = `${session.id}/${Date.now()}-${uniqueId}.${ext}`;
+
+    // Convert file to ArrayBuffer for reliable upload across Node.js environments
+    const fileBuffer = await file.arrayBuffer();
 
     const { error: uploadError } = await supabase.storage
       .from('complaint-images')
-      .upload(fileName, file, {
-        contentType: file.type,
+      .upload(fileName, fileBuffer, {
+        contentType: file.type === 'image/jpg' ? 'image/jpeg' : file.type,
+        cacheControl: '3600',
         upsert: false,
       });
 
     if (uploadError) {
       console.error('Upload error:', uploadError);
-      const message = process.env.NODE_ENV === 'development'
-        ? `Image upload failed: ${uploadError.message}`
-        : 'Failed to upload image. Please try again.';
+      const message =
+        process.env.NODE_ENV === 'development'
+          ? `Image upload failed: ${uploadError.message}`
+          : 'Failed to upload image. Please try again.';
       return apiError(message, 500);
     }
 
@@ -59,10 +70,13 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : '';
     console.error('Upload route error:', err);
+
     if (msg === 'UNAUTHORIZED') return apiError('Authentication required.', 401);
-    const message = process.env.NODE_ENV === 'development' && msg
-      ? `Image upload failed: ${msg}`
-      : 'Internal server error.';
+
+    const message =
+      process.env.NODE_ENV === 'development' && msg
+        ? `Image upload failed: ${msg}`
+        : 'Internal server error.';
     return apiError(message, 500);
   }
 }
